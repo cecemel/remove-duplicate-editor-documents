@@ -4,4 +4,4 @@ COPY Gemfile /app
 RUN bundle
 ENV INPUT_PATH="." OUTPUT_PATH="."
 COPY . /app
-CMD "/app/import-burgemeester.rb"
+CMD "/app/remove-duplicates.rb"
