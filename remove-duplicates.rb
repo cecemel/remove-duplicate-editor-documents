@@ -144,8 +144,8 @@ class DocsDeleter
     agenda = docs.select{ |t| inverted_mapping[t.status.value] == "agenda publiek"}
     besluiten = docs.select{ |t| inverted_mapping[t.status.value] == "besluitenlijst publiek"}
 
-    agenda_uris = agenda.map{ |u| "<#{u}>"}.join(",")
-    besluiten_uris = besluiten.map{ |u| "<#{u}>"}.join(",")
+    agenda_uris = agenda.map{ |u| "<#{u.doc.value}>"}.join(",")
+    besluiten_uris = besluiten.map{ |u| "<#{u.doc.value}>"}.join(",")
 
     query = %(
       PREFIX ns5:  <http://purl.org/dc/terms/>
