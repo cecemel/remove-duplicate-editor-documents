@@ -28,31 +28,34 @@ class DocsDeleter
   ADMS = RDF::Vocabulary.new('http://www.w3.org/ns/adms#')
   BASE_IRI='http://data.lblod.info/id'
 
+  DOCSTATES = { "besluitenlijst publiek" => "http://mu.semte.ch/application/editor-document-statuses/b763390a63d548bb977fb4804293084a",
+                "prullenbak" => "http://mu.semte.ch/application/editor-document-statuses/5A8304E8C093B00009000010",
+                "agenda publiek" => "http://mu.semte.ch/application/editor-document-statuses/627aec5d144c422bbd1077022c9b45d1"}
+
   def initialize(endpoint)
     @endpoint = endpoint
     @client = SPARQL::Client.new(endpoint)
     @log = Logger.new(STDOUT)
     @log.level = Logger::INFO
     wait_for_db
-    @old_status = "http://mu.semte.ch/application/editor-document-statuses/b763390a63d548bb977fb4804293084a"
-    @new_status = "http://mu.semte.ch/application/editor-document-statuses/5A8304E8C093B00009000010"
+    @manual_check = []
   end
 
   def generate_query()
     graphs = find_graphs_with_doc()
     all_docs_to_delete = []
     graphs.each do |graph|
-      triples = find_docs_eenheid_for_status(graph.g.value, @old_status)
+      triples = find_published_docs(graph.g.value)
       if triples.length <= 1
         p "No duplicates found for #{graph.g.value}"
         next
       end
-      triples_to_d = filter_duplicate_docs(triples)
-      # some mapping is needed
-      all_docs_to_delete += triples_to_d.map{ |t| t.doc.value }
+      triples_to_d = filter_duplicate_docs_from_sorted_triples(triples)
+      all_docs_to_delete += triples_to_d
     end
-    p "deleting #{all_docs_to_delete.length} documents"
-    generate_move_status(all_docs_to_delete, @old_status, @new_status)
+    p "Moving #{all_docs_to_delete.length} documents to prullenbak"
+    generate_move_status(all_docs_to_delete)
+    print_things_to_check_manually
   end
 
   def find_graphs_with_doc()
@@ -69,7 +72,7 @@ class DocsDeleter
        ))
   end
 
-  def find_docs_eenheid_for_status(eenheid_g, old_status)
+  def find_published_docs(eenheid_g)
     uuid = eenheid_g.gsub("http://mu.semte.ch/graphs/organizations/", "")
     query_str = %(
             PREFIX pav: <http://purl.org/pav/>
@@ -78,22 +81,26 @@ class DocsDeleter
             PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
             PREFIX mu: <http://mu.semte.ch/vocabularies/core/>
 
-            SELECT ?doc ?modified
+            SELECT DISTINCT ?doc ?modified ?eenheidType ?eenheidNaam ?statusName ?status
             WHERE {
-              #?eenheid mu:uuid "#{uuid}".
-              #?eenheid skos:prefLabel ?eenheidNaam.
-              #?eenheid besluit:classificatie ?classS.
-              #?classS skos:prefLabel ?eenheidType.
+              GRAPH <http://mu.semte.ch/graphs/public> {
+                ?eenheid mu:uuid "#{uuid}".
+                ?eenheid skos:prefLabel ?eenheidNaam.
+                ?eenheid besluit:classificatie ?classS.
+                ?classS skos:prefLabel ?eenheidType.
+                ?status ext:EditorDocumentStatusName ?statusName
+               }
 
               GRAPH <#{eenheid_g}> {
                 ?doc a ext:EditorDocument.
-                ?doc ext:editorDocumentStatus <#{old_status}>.
+                ?doc ext:editorDocumentStatus ?status.
                 ?doc pav:lastUpdateOn ?modified.
                 FILTER(
                   NOT EXISTS {
                        ?prevV pav:previousVersion ?doc.
                   }
                 )
+                FILTER (?status in (<#{DOCSTATES["agenda publiek"]}>, <#{DOCSTATES["besluitenlijst publiek"]}>))
               }
             }
             ORDER BY ?modified
@@ -101,45 +108,99 @@ class DocsDeleter
     query(query_str)
   end
 
-  def filter_duplicate_docs(triples)
+  def filter_duplicate_docs_from_sorted_triples(triples)
     ########################################################################
-    # BRITTLE ALERT
-    # custom heuristic !!!asumes sorted by time remove the previous 2
+    # Assumes triples are sorted by date
     ########################################################################
-    p "deleting from array #{triples.length}"
-    triples.pop()
-    triples
+    inverted_mapping = DOCSTATES.invert
+
+    if(not triples.length == (triples.uniq{ |t| t.doc.value }).length)
+      raise "duplicate doc uri found. Sure query correct?"
+    end
+
+    # last document modified is besluitenlijst publiek remove other docs
+    if  inverted_mapping[triples[-1].status.value] == "besluitenlijst publiek"
+      p "Last entry (besluiten) is valid for #{triples[-1].eenheidNaam.value}"
+      triples.pop()
+      return triples
+    end
+
+    has_besluitenlijst = triples.find{ |t| inverted_mapping[t.status.value] == "besluitenlijst publiek" }
+
+    if  inverted_mapping[triples[-1].status.value] == "agenda publiek" and not has_besluitenlijst
+      p "Last entry (agenda) is valid for #{triples[-1].eenheidNaam.value}"
+      triples.pop()
+      return triples
+    end
+
+    #Here we arrive in some weird state better see that is happening
+    @manual_check << triples[-1]
+    []
   end
 
-  def generate_move_status(docs, old_status, new_status)
-    uris_to_flush = docs.map{ |u| "<#{u}>"}.join(",")
+  def generate_move_status(docs)
+    inverted_mapping = DOCSTATES.invert
+    # filter agenda en besluiten
+    agenda = docs.select{ |t| inverted_mapping[t.status.value] == "agenda publiek"}
+    besluiten = docs.select{ |t| inverted_mapping[t.status.value] == "besluitenlijst publiek"}
+
+    agenda_uris = agenda.map{ |u| "<#{u}>"}.join(",")
+    besluiten_uris = besluiten.map{ |u| "<#{u}>"}.join(",")
 
     query = %(
-               PREFIX ns5:  <http://purl.org/dc/terms/>
-               PREFIX ns2: <http://mu.semte.ch/vocabularies/core/>
-               PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+      PREFIX ns5:  <http://purl.org/dc/terms/>
+      PREFIX ns2: <http://mu.semte.ch/vocabularies/core/>
+      PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
 
-                DELETE {
-                  GRAPH ?g {
-                    ?s ext:editorDocumentStatus <#{old_status}>.
-                  }
-                }
-                INSERT {
-                  GRAPH ?g {
-                    ?s ext:editorDocumentStatus <#{new_status}>.
-                  }
-                }
-                WHERE {
-                  GRAPH ?g {
-                    ?s ?p ?o .
-                    FILTER( ?s IN (#{uris_to_flush})) .
-                  }
-                };
-           )
+       DELETE {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <#{DOCSTATES["agenda publiek"]}>.
+         }
+       }
 
-    file_path = File.join(ENV['OUTPUT_PATH'],"#{DateTime.now.strftime("%Y%m%d%H%M%S")}-remove-burgemeesters.sparql")
+       INSERT {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <#{DOCSTATES["prullenbak"]}>.
+         }
+       }
+
+       WHERE {
+         GRAPH ?g {
+           ?s ?p ?o .
+           FILTER( ?s IN (#{agenda_uris})) .
+         }
+       };
+
+       DELETE {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <#{DOCSTATES["besluitenlijst publiek"]}>.
+         }
+       }
+
+       INSERT {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <#{DOCSTATES["prullenbak"]}>.
+         }
+       }
+
+       WHERE {
+         GRAPH ?g {
+           ?s ?p ?o .
+           FILTER( ?s IN (#{besluiten_uris})) .
+         }
+       };
+    )
+
+    file_path = File.join(ENV['OUTPUT_PATH'],"#{DateTime.now.strftime("%Y%m%d%H%M%S")}-remove-duplicates.sparql")
     open(file_path, 'w') { |f| f << query }
     query
+  end
+
+  def print_things_to_check_manually
+    p "!!!!!!! Some weird state where agenda has been modified after besluitenlijst publiek for:"
+    @manual_check.each do |t|
+      p "- EENHEID: #{t.eenheidNaam.value}, TYPE #{t.eenheidType.value}"
+    end
   end
 
 
