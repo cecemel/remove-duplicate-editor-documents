@@ -1,0 +1,43 @@
+
+      PREFIX ns5:  <http://purl.org/dc/terms/>
+      PREFIX ns2: <http://mu.semte.ch/vocabularies/core/>
+      PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+
+       DELETE {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <http://mu.semte.ch/application/editor-document-statuses/627aec5d144c422bbd1077022c9b45d1>.
+         }
+       }
+
+       INSERT {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <http://mu.semte.ch/application/editor-document-statuses/5A8304E8C093B00009000010>.
+         }
+       }
+
+       WHERE {
+         GRAPH ?g {
+           ?s ?p ?o .
+           FILTER( ?s IN (<http://lblod.info/editor-documents/5C38513846EFC2000A0002BA>,<http://lblod.info/editor-documents/5C34742A53ECF1000B0001F6>,<http://lblod.info/editor-documents/5C20B26553ECF1000A00013B>,<http://lblod.info/editor-documents/5C249CBA53ECF1000A0000F9>,<http://lblod.info/editor-documents/5C24A49653ECF1000A00014F>,<http://lblod.info/editor-documents/5C2CD57353ECF1000A0002AD>,<http://lblod.info/editor-documents/5C24E1ED53ECF1000B000199>,<http://lblod.info/editor-documents/5C34AEE753ECF1000B0002F0>,<http://lblod.info/editor-documents/5C2DE26153ECF1000A0004E8>,<http://lblod.info/editor-documents/5C2DE26553ECF1000A0004E9>)) .
+         }
+       };
+
+       DELETE {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <http://mu.semte.ch/application/editor-document-statuses/b763390a63d548bb977fb4804293084a>.
+         }
+       }
+
+       INSERT {
+         GRAPH ?g {
+           ?s ext:editorDocumentStatus <http://mu.semte.ch/application/editor-document-statuses/5A8304E8C093B00009000010>.
+         }
+       }
+
+       WHERE {
+         GRAPH ?g {
+           ?s ?p ?o .
+           FILTER( ?s IN ()) .
+         }
+       };
+    

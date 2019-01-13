@@ -9,6 +9,7 @@ require 'securerandom'
 require 'tempfile'
 require 'csv'
 require 'pry-byebug'
+require 'digest/sha1'
 
 class DocsDeleter
   attr_reader :client, :log
@@ -46,6 +47,7 @@ class DocsDeleter
     all_docs_to_delete = []
     graphs.each do |graph|
       triples = find_published_docs(graph.g.value)
+      p "Found #{triples.length} docs"
       if triples.length <= 1
         p "No duplicates found for #{graph.g.value}"
         next
@@ -80,8 +82,9 @@ class DocsDeleter
             PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
             PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
             PREFIX mu: <http://mu.semte.ch/vocabularies/core/>
+            PREFIX dct: <http://purl.org/dc/terms/>
 
-            SELECT DISTINCT ?doc ?modified ?eenheidType ?eenheidNaam ?statusName ?status
+            SELECT DISTINCT ?doc ?modified ?eenheidType ?eenheidNaam ?statusName ?status ?content ?title
             WHERE {
               GRAPH <http://mu.semte.ch/graphs/public> {
                 ?eenheid mu:uuid "#{uuid}".
@@ -95,6 +98,8 @@ class DocsDeleter
                 ?doc a ext:EditorDocument.
                 ?doc ext:editorDocumentStatus ?status.
                 ?doc pav:lastUpdateOn ?modified.
+                ?doc dct:title ?title.
+                ?doc ext:editorDocumentContent ?content.
                 FILTER(
                   NOT EXISTS {
                        ?prevV pav:previousVersion ?doc.
@@ -120,7 +125,12 @@ class DocsDeleter
 
     # last document modified is besluitenlijst publiek remove other docs
     if  inverted_mapping[triples[-1].status.value] == "besluitenlijst publiek"
-      p "Last entry (besluiten) is valid for #{triples[-1].eenheidNaam.value}"
+      # make sure (potential) duplicates are about the same doc
+      if(not all_same_docs(triples))
+        @manual_check << triples[-1] # if not the case a manual check should be performed
+        return []
+      end
+       p "Last entry (besluiten) is valid for #{triples[-1].eenheidNaam.value}"
       triples.pop()
       return triples
     end
@@ -128,6 +138,11 @@ class DocsDeleter
     has_besluitenlijst = triples.find{ |t| inverted_mapping[t.status.value] == "besluitenlijst publiek" }
 
     if  inverted_mapping[triples[-1].status.value] == "agenda publiek" and not has_besluitenlijst
+      # make sure (potential) duplicates are about the same doc
+      if(not all_same_docs(triples))
+        @manual_check << triples[-1] # if not the case a manual check should be performed
+        return []
+      end
       p "Last entry (agenda) is valid for #{triples[-1].eenheidNaam.value}"
       triples.pop()
       return triples
@@ -136,6 +151,10 @@ class DocsDeleter
     #Here we arrive in some weird state better see that is happening
     @manual_check << triples[-1]
     []
+  end
+
+  def all_same_docs(triples)
+    (triples.uniq{ |t| t.title.value }).length == 1
   end
 
   def generate_move_status(docs)
